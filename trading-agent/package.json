@@ -1,0 +1,15 @@
+{
+  "name": "burger-trading",
+  "version": "2.0.0",
+  "description": "🍔 汉堡交易 · 田忌赛马 AI 自动化博弈系统",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "deploy": "bash deploy.sh",
+    "build:docker": "docker build -t burger-trading .",
+    "start:docker": "docker run -d --name burger -p 3088:3088 --restart always burger-trading"
+  },
+  "keywords": ["trading", "ai", "crypto", "strategy", "burger"],
+  "license": "MIT"
+}

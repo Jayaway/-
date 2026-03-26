@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  burger-trading:
+    build: .
+    container_name: burger-trading
+    restart: always
+    ports:
+      - "3088:3088"
+    environment:
+      - NODE_ENV=production
+      - PORT=3088
+    volumes:
+      - ./data:/app/data

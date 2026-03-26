@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🍔 汉堡交易 · 田忌赛马博弈系统</title>
+    <style>
+        :root {
+            --mcd-red: #D32F2F; --mcd-red-dark: #B71C1C;
+            --mcd-yellow: #FFC72C; --mcd-yellow-dark: #FFB300;
+            --mcd-light: #FFF8E1; --mcd-gray: #757575; --mcd-dark: #212121;
+            --green: #4CAF50; --green-bg: #E8F5E9;
+            --red: #F44336; --red-bg: #FFEBEE;
+            --blue: #2196F3; --orange: #FF9800;
+            --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
+            --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
+            --shadow-lg: 0 8px 32px rgba(0,0,0,0.18);
+            --r: 10px; --rs: 8px;
+            --t: 0.2s cubic-bezier(0.4,0,0.2,1);
+        }
+        *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+        body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#f0f2f5;color:var(--mcd-dark);line-height:1.5;-webkit-font-smoothing:antialiased}
+        button{font-family:inherit}
+        ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#ddd;border-radius:2px}
+
+        .shell{display:flex;height:100vh;overflow:hidden}
+        .sidebar{width:220px;background:#fff;border-right:1px solid #e8e8e8;display:flex;flex-direction:column;flex-shrink:0;z-index:20}
+        .main{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:16px}
+        .page{display:none}.page.active{display:block}
+
+        .sidebar-head{padding:20px 16px 12px;border-bottom:1px solid #f0f0f0}
+        .sidebar-head h1{font-size:16px;font-weight:800;color:var(--mcd-red)}
+        .sidebar-head p{font-size:11px;color:var(--mcd-gray);margin-top:2px}
+        .sidebar-nav{flex:1;padding:8px;overflow-y:auto}
+        .nav-btn{display:flex;align-items:center;gap:8px;width:100%;padding:10px 12px;border:none;background:none;border-radius:var(--rs);font-size:13px;cursor:pointer;color:var(--mcd-dark);transition:background var(--t);text-align:left}
+        .nav-btn:hover{background:var(--mcd-light)}
+        .nav-btn.active{background:var(--mcd-yellow);color:#fff;font-weight:600}
+        .sidebar-banner{padding:12px;margin:0 8px 8px;border-radius:var(--rs);background:transparent;text-align:center}
+        .sidebar-banner img{width:90%;max-width:120px;margin:0 auto;display:block;border-radius:8px}
+        .sidebar-footer{padding:12px;font-size:10px;color:var(--mcd-gray)}
+        .ws-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
+        .ws-dot.on{background:var(--green);box-shadow:0 0 6px var(--green)}
+        .ws-dot.off{background:var(--red)}
+
+        .stats-bar{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+        .stat-card{background:#fff;border-radius:var(--rs);padding:16px;box-shadow:var(--shadow-sm)}
+        .stat-label{font-size:11px;color:var(--mcd-gray);margin-bottom:4px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px}
+        .stat-value{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
+        .stat-value.pos{color:var(--green)}.stat-value.neg{color:var(--red)}
+
+        .kitchen-controls{background:#fff;border-radius:var(--r);padding:16px 20px;box-shadow:var(--shadow-sm);display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+        .kitchen-title{font-size:14px;font-weight:700;color:var(--mcd-red);margin-right:auto}
+
+        .cards-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px}
+        .burger-card{background:#fff;border-radius:var(--r);box-shadow:var(--shadow-sm);overflow:hidden;border:1px solid #f0f0f0;transition:box-shadow var(--t);position:relative}
+        .burger-card:hover{box-shadow:var(--shadow-md)}
+        .burger-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--mcd-yellow);transform:scaleX(0);transform-origin:left;transition:transform 0.3s}
+        .burger-card:hover::before{transform:scaleX(1)}
+        .burger-card.burned{border-color:var(--red);opacity:0.85}
+        .burger-card.burned::before{background:var(--red);transform:scaleX(1)}
+        .card-head{padding:16px 20px 10px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #f5f5f5}
+        .card-name{font-size:15px;font-weight:700}
+        .card-emoji{font-size:20px;margin-right:6px}
+        .status-badge{font-size:11px;padding:3px 10px;border-radius:20px;font-weight:600;color:#fff}
+        .status-badge.running{background:var(--green)}
+        .status-badge.idle{background:var(--mcd-gray)}
+        .status-badge.burned{background:var(--red)}
+        .card-body{padding:14px 20px}
+        .pnl-display{font-size:26px;font-weight:800;font-variant-numeric:tabular-nums;margin-bottom:12px}
+        .pnl-display.pos{color:var(--green)}.pnl-display.neg{color:var(--red)}.pnl-display.zero{color:var(--mcd-gray)}
+        .metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+        .metric{background:var(--mcd-light);border-radius:var(--rs);padding:8px}
+        .metric-label{font-size:10px;color:var(--mcd-gray);margin-bottom:2px}
+        .metric-value{font-size:14px;font-weight:600}
+        .alloc-bar{display:flex;height:8px;border-radius:4px;overflow:hidden;margin-bottom:12px;background:#eee}
+        .alloc-bar .base{background:var(--mcd-yellow)}
+        .alloc-bar .patty{background:var(--mcd-red)}
+        .alloc-bar .sauce{background:var(--orange)}
+        .anti-burn{border-radius:var(--rs);padding:8px 12px;margin-bottom:12px;font-size:11px;display:flex;align-items:center;gap:6px}
+        .anti-burn.warn{background:var(--red-bg);color:var(--red)}
+        .anti-burn.ok{background:var(--green-bg);color:var(--green)}
+        .card-tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+        .tag{font-size:10px;padding:3px 8px;border-radius:4px;background:var(--mcd-light);color:var(--mcd-gray)}
+        .mini-chart{width:100%;height:40px;margin-bottom:12px}
+        .card-foot{display:flex;gap:6px;padding:10px 20px;border-top:1px solid #f5f5f5;background:#fafafa}
+        .card-foot .btn{flex:1;justify-content:center}
+
+        .builder{background:#fff;border-radius:var(--r);padding:20px;box-shadow:var(--shadow-sm)}
+        .builder h2{font-size:16px;font-weight:700;color:var(--mcd-red);margin-bottom:16px}
+        .builder-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+        .preset-card{background:var(--mcd-light);border-radius:var(--rs);padding:16px;cursor:pointer;transition:all var(--t);border:2px solid transparent}
+        .preset-card:hover{border-color:var(--mcd-yellow);transform:translateY(-2px);box-shadow:var(--shadow-md)}
+        .preset-name{font-size:15px;font-weight:700;margin-bottom:4px}
+        .preset-desc{font-size:12px;color:var(--mcd-gray)}
+        .preset-alloc{display:flex;gap:8px;margin-top:8px;font-size:11px}
+        .preset-alloc span{padding:2px 6px;border-radius:3px}
+        .form-row{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-top:16px}
+        .form-group{display:flex;flex-direction:column;gap:4px}
+        .form-group label{font-size:11px;color:var(--mcd-gray);font-weight:600}
+        .form-group select,.form-group input{padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;background:#fff;min-width:120px}
+        .form-group select:focus,.form-group input:focus{outline:none;border-color:var(--mcd-yellow)}
+
+        .rankings-table{width:100%;border-collapse:collapse;font-size:13px;background:#fff;border-radius:var(--r);overflow:hidden;box-shadow:var(--shadow-sm)}
+        .rankings-table th{text-align:left;padding:12px 16px;background:var(--mcd-yellow);color:var(--mcd-dark);font-weight:700;font-size:12px}
+        .rankings-table td{padding:10px 16px;border-bottom:1px solid #f5f5f5}
+        .rankings-table tr:hover{background:#fafafa}
+        .rank-num{font-weight:800;font-size:16px;width:40px;text-align:center}
+        .rank-1{color:var(--mcd-yellow-dark)}.rank-2{color:var(--mcd-gray)}.rank-3{color:#CD7F32}
+
+        .btn{padding:8px 16px;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;transition:all var(--t);display:inline-flex;align-items:center;gap:6px}
+        .btn:active{transform:scale(0.97)}
+        .btn:disabled{opacity:0.5;cursor:not-allowed}
+        .btn-primary{background:var(--mcd-red);color:#fff}.btn-primary:hover{background:var(--mcd-red-dark)}
+        .btn-yellow{background:var(--mcd-yellow);color:var(--mcd-dark)}.btn-yellow:hover{background:var(--mcd-yellow-dark)}
+        .btn-green{background:var(--green);color:#fff}.btn-green:hover{background:#43A047}
+        .btn-gray{background:#f5f5f5;color:var(--mcd-dark)}.btn-gray:hover{background:#eee}
+
+        .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:100;display:flex;align-items:center;justify-content:center;opacity:0;visibility:hidden;transition:all 0.2s;padding:16px}
+        .modal-bg.open{opacity:1;visibility:visible}
+        .modal-box{background:#fff;border-radius:var(--r);width:100%;max-width:720px;max-height:85vh;overflow-y:auto;box-shadow:var(--shadow-lg);border-top:3px solid var(--mcd-yellow);transform:translateY(16px) scale(0.97);transition:transform 0.2s}
+        .modal-bg.open .modal-box{transform:translateY(0) scale(1)}
+        .modal-hd{display:flex;justify-content:space-between;align-items:center;padding:20px 24px 12px;position:sticky;top:0;background:#fff;z-index:1}
+        .modal-hd h2{font-size:18px;font-weight:700;color:var(--mcd-red)}
+        .modal-x{background:none;border:none;font-size:18px;cursor:pointer;color:var(--mcd-gray);padding:4px 8px;border-radius:6px}
+        .modal-x:hover{background:var(--red-bg);color:var(--red)}
+        .modal-bd{padding:0 24px 20px}
+        .tab-bar{display:flex;border-bottom:2px solid #f0f0f0;margin-bottom:16px}
+        .tab-btn{padding:8px 16px;border:none;background:none;font-size:13px;font-weight:600;cursor:pointer;color:var(--mcd-gray);border-bottom:2px solid transparent;margin-bottom:-2px;transition:all var(--t)}
+        .tab-btn.active{color:var(--mcd-red);border-bottom-color:var(--mcd-red)}
+        .tab-panel{display:none}.tab-panel.active{display:block}
+        .trade-table{width:100%;border-collapse:collapse;font-size:12px}
+        .trade-table th{text-align:left;padding:8px;border-bottom:2px solid #f0f0f0;color:var(--mcd-gray);font-weight:600}
+        .trade-table td{padding:8px;border-bottom:1px solid #f5f5f5}
+        .log-line{font-size:11px;padding:3px 0;border-bottom:1px solid #f8f8f8;font-family:monospace}
+        .log-buy{color:var(--green)}.log-sell{color:var(--red)}.log-info{color:var(--blue)}.log-error{color:var(--red)}.log-warn{color:var(--orange)}
+        .chart-area{width:100%;height:180px;border-radius:var(--rs);overflow:hidden;background:#fafafa;margin-bottom:16px}
+
+        /* Ticker */
+        .ticker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
+        .ticker-card{background:#fff;border-radius:var(--r);padding:16px;box-shadow:var(--shadow-sm);border:1px solid #f0f0f0}
+        .ticker-symbol{font-size:14px;font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+        .ticker-symbol img{width:20px;height:20px;border-radius:50%}
+        .ticker-price{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;margin-bottom:4px}
+        .ticker-change{font-size:13px;font-weight:600;padding:2px 8px;border-radius:4px;display:inline-block}
+        .ticker-change.up{background:var(--green-bg);color:var(--green)}
+        .ticker-change.down{background:var(--red-bg);color:var(--red)}
+        .ticker-meta{font-size:11px;color:var(--mcd-gray);margin-top:8px;display:flex;justify-content:space-between}
+        .ticker-loading{background:linear-gradient(90deg,#f0f0f0 25%,#e0e0e0 50%,#f0f0f0 75%);background-size:200% 100%;animation:shimmer 1.5s infinite;border-radius:4px;height:20px;margin-bottom:8px}
+        @keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+        /* Exchange Settings */
+        .exchange-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px}
+        .exchange-card{background:#fff;border-radius:var(--r);box-shadow:var(--shadow-sm);overflow:hidden;border:1px solid #f0f0f0}
+        .exchange-head{padding:16px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #f5f5f5;background:var(--mcd-light)}
+        .exchange-name{font-size:16px;font-weight:700}
+        .exchange-badge{font-size:11px;padding:3px 10px;border-radius:20px;font-weight:600;background:var(--mcd-gray);color:#fff}
+        .exchange-badge.testnet{background:var(--orange)}
+        .exchange-badge.connected{background:var(--green)}
+        .exchange-body{padding:16px 20px}
+        .exchange-info{margin-bottom:12px}
+        .exchange-label{font-size:11px;color:var(--mcd-gray);margin-bottom:4px;font-weight:600}
+        .exchange-value{font-size:13px;font-family:monospace;background:var(--mcd-light);padding:6px 10px;border-radius:6px;word-break:break-all}
+        .exchange-input{width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px}
+        .exchange-input:focus{outline:none;border-color:var(--mcd-yellow)}
+        .exchange-tags{display:flex;gap:6px;flex-wrap:wrap}
+        .etag{font-size:10px;padding:3px 8px;border-radius:4px;background:var(--green-bg);color:var(--green);font-weight:600}
+        .exchange-status{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--green);margin-top:12px;padding-top:12px;border-top:1px solid #f5f5f5}
+        .status-dot{width:8px;height:8px;border-radius:50%;background:var(--mcd-gray)}
+        .status-dot.connected{background:var(--green);box-shadow:0 0 6px var(--green)}
+
+        .toast-container{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:999;display:flex;flex-direction:column;gap:8px;align-items:center}
+        .toast{padding:10px 20px;border-radius:var(--rs);font-size:13px;font-weight:500;color:#fff;box-shadow:var(--shadow-md);animation:toastIn .3s ease,toastOut .3s ease 2.5s forwards;white-space:nowrap}
+        .toast.success{background:var(--green)}.toast.error{background:var(--red)}.toast.info{background:var(--blue)}
+        @keyframes toastIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes toastOut{from{opacity:1}to{opacity:0;transform:translateY(-10px)}}
+
+        .live-dot{display:inline-block;width:8px;height:8px;background:var(--green);border-radius:50%;margin-left:6px;animation:pulse 1.5s ease-in-out infinite;box-shadow:0 0 6px var(--green)}
+        @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.5;transform:scale(0.8)}}
+
+        .empty{text-align:center;padding:60px 20px;color:var(--mcd-gray)}
+        .empty-icon{font-size:48px;margin-bottom:12px;opacity:0.3}
+
+        @media(max-width:768px){
+            .sidebar{position:fixed;left:-220px;height:100vh;transition:left 0.3s;z-index:50;box-shadow:var(--shadow-lg)}
+            .sidebar.open{left:0}
+            .sidebar-ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.3);z-index:40}
+            .sidebar-ov.show{display:block}
+            .menu-toggle{display:flex!important}
+            .main{padding:16px;padding-top:56px}
+            .cards-grid{grid-template-columns:1fr}
+            .form-row{flex-direction:column}
+            .form-group select,.form-group input{width:100%}
+        }
+        .menu-toggle{display:none;position:fixed;top:12px;left:12px;z-index:60;width:40px;height:40px;border-radius:50%;background:var(--mcd-yellow);border:none;box-shadow:var(--shadow-md);align-items:center;justify-content:center;font-size:18px;cursor:pointer}
+    </style>
+</head>
+<body>
+<button class="menu-toggle" onclick="document.querySelector('.sidebar').classList.toggle('open');document.querySelector('.sidebar-ov').classList.toggle('show')">☰</button>
+<div class="sidebar-ov" onclick="document.querySelector('.sidebar').classList.remove('open');this.classList.remove('show')"></div>
+
+<div class="shell">
+    <aside class="sidebar">
+        <div class="sidebar-head">
+            <h1>🍔 汉堡交易</h1>
+            <p>田忌赛马博弈系统</p>
+        </div>
+        <div class="sidebar-nav">
+            <button class="nav-btn active" data-page="dashboard">🏇 赛马面板</button>
+            <button class="nav-btn" data-page="ticker">📊 实时行情</button>
+            <button class="nav-btn" data-page="builder">🧪 汉堡实验室</button>
+            <button class="nav-btn" data-page="rankings">🏆 实时排名</button>
+            <button class="nav-btn" data-page="exchange">🏦 交易所设置</button>
+        </div>
+        <div class="sidebar-banner">
+            <img src="mcd-logo.png" alt="M">
+        </div>
+        <div class="sidebar-footer">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                <span class="ws-dot off" id="ws-dot"></span>
+                <span id="ws-text">未连接</span>
+            </div>
+            <div>🍔 v2.0 · 田忌赛马 AI 博弈</div>
+            <div style="margin-top:4px" id="clock">🕐 --</div>
+        </div>
+    </aside>
+
+    <main class="main">
+        <!-- PAGE: Dashboard -->
+        <div class="page active" id="page-dashboard">
+            <div class="stats-bar" id="stats-bar">
+                <div class="stat-card"><div class="stat-label">总盈亏</div><div class="stat-value" id="stat-pnl">0U</div></div>
+                <div class="stat-card"><div class="stat-label">运行中</div><div class="stat-value" id="stat-active">0/0</div></div>
+                <div class="stat-card"><div class="stat-label">已熔断</div><div class="stat-value neg" id="stat-burned">0</div></div>
+                <div class="stat-card"><div class="stat-label">总交易</div><div class="stat-value" id="stat-trades">0</div></div>
+            </div>
+            <div class="kitchen-controls">
+                <span class="kitchen-title">🍳 厨房控制台</span>
+                <button class="btn btn-green" onclick="startAllBurgers()">▶ 一键出餐</button>
+                <button class="btn btn-gray" onclick="stopAllBurgers()">⏹ 全部关火</button>
+            </div>
+            <div class="cards-grid" id="burger-cards">
+                <div class="empty" id="empty-state">
+                    <div class="empty-icon">🍔</div>
+                    <p>还没有汉堡，去「汉堡实验室」创建一个吧</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- PAGE: Ticker -->
+        <div class="page" id="page-ticker">
+            <h2 style="font-size:18px;font-weight:700;color:var(--mcd-red);margin-bottom:16px">📊 实时行情</h2>
+            <div class="ticker-grid" id="ticker-grid"></div>
+        </div>
+
+        <!-- PAGE: Builder -->
+        <div class="page" id="page-builder">
+            <div class="builder">
+                <h2>🧪 汉堡实验室 — 选择你的配方</h2>
+                <div style="font-size:13px;color:var(--mcd-gray);margin-bottom:16px">选择预设或自定义 底层面包 + 核心肉饼 + 特殊酱汁</div>
+                <div class="builder-grid" id="preset-grid"></div>
+                <div style="margin-top:20px;border-top:1px solid #f0f0f0;padding-top:16px">
+                    <h3 style="font-size:14px;font-weight:700;margin-bottom:12px">📝 自定义配置</h3>
+                    <div class="form-row">
+                        <div class="form-group"><label>汉堡名称</label><input type="text" id="b-name" placeholder="例: 巨无霸"></div>
+                        <div class="form-group"><label>表情</label><input type="text" id="b-emoji" value="🍔" style="width:60px;text-align:center"></div>
+                        <div class="form-group"><label>底层面包 (Base)</label><select id="b-base"><option value="">加载中...</option></select></div>
+                        <div class="form-group"><label>核心肉饼 (Patty)</label><select id="b-patty"><option value="">加载中...</option></select></div>
+                        <div class="form-group"><label>特殊酱汁 (Sauce)</label><select id="b-sauce"><option value="">加载中...</option></select></div>
+                        <div class="form-group"><label>交易对</label><select id="b-symbol"><option value="BTCUSDT">BTC/USDT</option><option value="ETHUSDT">ETH/USDT</option><option value="SOLUSDT">SOL/USDT</option><option value="DOGEUSDT">DOGE/USDT</option><option value="HYPEUSDT">HYPE/USDT</option><option value="BNBUSDT">BNB/USDT</option></select></div>
+                        <div class="form-group"><label>交易所</label><select id="b-exchange" onchange="toggleApiFields()"><option value="mock">实时模拟 (无需API)</option><option value="gate">Gate.io</option><option value="binance-public">Binance (公开行情)</option><option value="okx">OKX</option></select></div>
+                        <div class="form-group" id="api-key-group" style="display:none"><label>API Key</label><input type="text" id="b-apiKey" placeholder="API Key"></div>
+                        <div class="form-group" id="api-secret-group" style="display:none"><label>API Secret</label><input type="password" id="b-apiSecret" placeholder="API Secret"></div>
+                    </div>
+                    <div style="margin-top:16px;display:flex;gap:12px;align-items:center">
+                        <button class="btn btn-primary" onclick="createBurger()">🍔 创建汉堡</button>
+                        <span style="font-size:12px;color:var(--mcd-gray)">或点击预设一键创建</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- PAGE: Rankings -->
+        <div class="page" id="page-rankings">
+            <h2 style="font-size:18px;font-weight:700;color:var(--mcd-red);margin-bottom:16px">🏆 田忌赛马 — 实时排名</h2>
+            <table class="rankings-table" id="rankings-table">
+                <thead><tr><th>排名</th><th>汉堡</th><th>综合评分</th><th>胜率</th><th>盈亏</th><th>状态</th><th>连亏</th></tr></thead>
+                <tbody id="rankings-body"><tr><td colspan="7" style="text-align:center;color:var(--mcd-gray);padding:40px">暂无数据</td></tr></tbody>
+            </table>
+        </div>
+
+        <!-- PAGE: Exchange Settings -->
+        <div class="page" id="page-exchange">
+            <h2 style="font-size:18px;font-weight:700;color:var(--mcd-red);margin-bottom:16px">🏦 交易所设置</h2>
+            <div class="exchange-grid">
+                <div class="exchange-card" id="exchange-gate">
+                    <div class="exchange-head">
+                        <span class="exchange-name">🚪 Gate.io</span>
+                        <span class="exchange-badge">待配置</span>
+                    </div>
+                    <div class="exchange-body">
+                        <div class="exchange-info">
+                            <div class="exchange-label">API Key</div>
+                            <input type="text" class="exchange-input" placeholder="输入你的 API Key" id="gate-key-input">
+                        </div>
+                        <div class="exchange-info">
+                            <div class="exchange-label">API Secret</div>
+                            <input type="password" class="exchange-input" placeholder="输入你的 API Secret" id="gate-secret-input">
+                        </div>
+                        <div class="exchange-info">
+                            <div class="exchange-label">API Host</div>
+                            <select class="exchange-input" id="gate-host">
+                                <option value="https://api.gateio.ws">正式网</option>
+                                <option value="https://api-testnet.gateio.ws">测试网</option>
+                            </select>
+                        </div>
+                        <button class="btn btn-yellow btn-sm" onclick="saveExchange('gate')" style="margin-top:12px">💾 保存配置</button>
+                        <div style="font-size:11px;color:var(--mcd-gray);margin-top:8px">⚠️ 密钥仅存储在本地浏览器，不会上传服务器</div>
+                    </div>
+                </div>
+                <div class="exchange-card" id="exchange-binance">
+                    <div class="exchange-head">
+                        <span class="exchange-name">🟡 Binance</span>
+                        <span class="exchange-badge">待配置</span>
+                    </div>
+                    <div class="exchange-body">
+                        <div class="exchange-info">
+                            <div class="exchange-label">API Key</div>
+                            <input type="text" class="exchange-input" placeholder="输入 API Key" id="binance-key-input">
+                        </div>
+                        <div class="exchange-info">
+                            <div class="exchange-label">API Secret</div>
+                            <input type="password" class="exchange-input" placeholder="输入 API Secret" id="binance-secret-input">
+                        </div>
+                        <button class="btn btn-yellow btn-sm" onclick="saveExchange('binance')" style="margin-top:12px">💾 保存配置</button>
+                    </div>
+                </div>
+                <div class="exchange-card" id="exchange-okx">
+                    <div class="exchange-head">
+                        <span class="exchange-name">🔵 OKX</span>
+                        <span class="exchange-badge">待配置</span>
+                    </div>
+                    <div class="exchange-body">
+                        <div class="exchange-info">
+                            <div class="exchange-label">API Key</div>
+                            <input type="text" class="exchange-input" placeholder="输入 API Key" id="okx-key-input">
+                        </div>
+                        <div class="exchange-info">
+                            <div class="exchange-label">API Secret</div>
+                            <input type="password" class="exchange-input" placeholder="输入 API Secret" id="okx-secret-input">
+                        </div>
+                        <div class="exchange-info">
+                            <div class="exchange-label">Passphrase</div>
+                            <input type="password" class="exchange-input" placeholder="输入 Passphrase" id="okx-pass-input">
+                        </div>
+                        <button class="btn btn-yellow btn-sm" onclick="saveExchange('okx')" style="margin-top:12px">💾 保存配置</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+</div>
+
+<!-- Modal -->
+<div class="modal-bg" id="modal-bg" onclick="if(event.target===this)closeModal()">
+    <div class="modal-box">
+        <div class="modal-hd">
+            <h2 id="modal-title">详情</h2>
+            <button class="modal-x" onclick="closeModal()">✕</button>
+        </div>
+        <div class="modal-bd">
+            <div class="tab-bar">
+                <button class="tab-btn active" data-tab="overview">总览</button>
+                <button class="tab-btn" data-tab="trades">交易记录</button>
+                <button class="tab-btn" data-tab="signals">信号</button>
+                <button class="tab-btn" data-tab="logs">日志</button>
+            </div>
+            <div class="tab-panel active" id="tab-overview"></div>
+            <div class="tab-panel" id="tab-trades"></div>
+            <div class="tab-panel" id="tab-signals"></div>
+            <div class="tab-panel" id="tab-logs"></div>
+        </div>
+    </div>
+</div>
+
+<div class="toast-container" id="toast-container"></div>
+
+<script>
+const API = '';
+let ws = null;
+const burgerStates = new Map();
+const presets = [];
+let strategies = [];
+let currentDetailId = null;
+
+function showToast(msg, type = 'success') {
+    const c = document.getElementById('toast-container');
+    const t = document.createElement('div');
+    t.className = `toast ${type}`; t.textContent = msg;
+    c.appendChild(t); setTimeout(() => t.remove(), 3000);
+}
+
+async function init() {
+    await loadStrategies();
+    await loadPresets();
+    await loadBurgers();
+    connectWS();
+    setInterval(updateRankings, 5000);
+    loadTicker();
+    setInterval(loadTicker, 10000); // 每10秒刷新行情
+}
+
+// ===== 实时行情 =====
+const TICKER_SYMBOLS = ['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','DOGEUSDT','HYPEUSDT'];
+const TICKER_NAMES = {BTCUSDT:'Bitcoin',ETHUSDT:'Ethereum',SOLUSDT:'Solana',BNBUSDT:'BNB',DOGEUSDT:'Dogecoin',HYPEUSDT:'Hype'};
+const TICKER_EMOJI = {BTCUSDT:'₿',ETHUSDT:'Ξ',SOLUSDT:'◎',BNBUSDT:'◆',DOGEUSDT:'🐕',HYPEUSDT:'🚀'};
+
+async function loadTicker() {
+    const grid = document.getElementById('ticker-grid');
+    if (!grid) return;
+    
+    // 初始化卡片（仅首次）
+    if (!grid.children.length) {
+        grid.innerHTML = TICKER_SYMBOLS.map(s => `
+            <div class="ticker-card" id="ticker-${s}">
+                <div class="ticker-symbol">${TICKER_EMOJI[s]} ${s.replace('USDT','/USDT')} <span style="font-size:11px;color:var(--mcd-gray);font-weight:400">${TICKER_NAMES[s]}</span></div>
+                <div class="ticker-loading"></div>
+                <div class="ticker-loading" style="width:60%"></div>
+            </div>
+        `).join('');
+    }
+
+    // 并发获取价格
+    const promises = TICKER_SYMBOLS.map(async (symbol) => {
+        try {
+            // 通过 Gate.io 公开端点获取（无需API）
+            const gateSymbol = symbol.replace('USDT', '_USDT');
+            const r = await fetch(`https://api.gateio.ws/api/v4/spot/tickers?currency_pair=${gateSymbol}`);
+            const data = await r.json();
+            const ticker = Array.isArray(data) ? data[0] : data;
+            return {
+                symbol,
+                price: parseFloat(ticker.last || 0),
+                change: parseFloat(ticker.change_percentage || 0),
+                volume: parseFloat(ticker.base_volume || 0),
+                high: parseFloat(ticker.high_24h || 0),
+                low: parseFloat(ticker.low_24h || 0)
+            };
+        } catch (e) {
+            return { symbol, price: 0, change: 0, volume: 0, high: 0, low: 0, error: true };
+        }
+    });
+
+    const results = await Promise.all(promises);
+    results.forEach(t => {
+        const el = document.getElementById(`ticker-${t.symbol}`);
+        if (!el) return;
+        const isUp = t.change >= 0;
+        const changeClass = isUp ? 'up' : 'down';
+        const arrow = isUp ? '▲' : '▼';
+        const priceStr = t.price >= 1 ? t.price.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : t.price.toFixed(6);
+        
+        el.innerHTML = `
+            <div class="ticker-symbol">${TICKER_EMOJI[t.symbol]} ${t.symbol.replace('USDT','/USDT')} <span style="font-size:11px;color:var(--mcd-gray);font-weight:400">${TICKER_NAMES[t.symbol]}</span></div>
+            <div class="ticker-price" style="color:${isUp?'var(--green)':'var(--red)'}">$${priceStr}</div>
+            <span class="ticker-change ${changeClass}">${arrow} ${Math.abs(t.change).toFixed(2)}%</span>
+            <div class="ticker-meta">
+                <span>24h高: $${t.high >= 1 ? t.high.toLocaleString('en-US',{maximumFractionDigits:2}) : t.high.toFixed(6)}</span>
+                <span>24h低: $${t.low >= 1 ? t.low.toLocaleString('en-US',{maximumFractionDigits:2}) : t.low.toFixed(6)}</span>
+            </div>
+        `;
+    });
+}
+
+// ===== 交易所设置 =====
+function saveExchange(type) {
+    showToast(`${type} 配置已保存（本地）`, 'success');
+}
+
+async function loadStrategies() {
+    try {
+        const r = await fetch(`${API}/api/strategies`);
+        const d = await r.json();
+        if (d.ok) { strategies = d.data; populateDropdowns(); }
+    } catch (e) { console.error('Load strategies failed:', e); }
+}
+
+function populateDropdowns() {
+    const bases = strategies.filter(s => s.layer === 'base');
+    const patties = strategies.filter(s => s.layer === 'patty');
+    const sauces = strategies.filter(s => s.layer === 'sauce');
+    document.getElementById('b-base').innerHTML = bases.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+    document.getElementById('b-patty').innerHTML = patties.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+    document.getElementById('b-sauce').innerHTML = '<option value="none">无 (不加酱汁)</option>' + sauces.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+}
+
+async function loadPresets() {
+    try {
+        const r = await fetch(`${API}/api/burgers/presets`);
+        const d = await r.json();
+        if (d.ok) { presets.length = 0; presets.push(...d.data); renderPresets(); }
+    } catch (e) {}
+}
+
+function renderPresets() {
+    document.getElementById('preset-grid').innerHTML = presets.map(p => `
+        <div class="preset-card" onclick="createFromPreset('${p.id}')">
+            <div class="preset-name">${p.emoji} ${p.name}</div>
+            <div class="preset-desc">${p.description}</div>
+            <div class="preset-alloc">
+                <span style="background:var(--mcd-yellow);color:var(--mcd-dark)">底${(p.allocBase*100)|0}%</span>
+                <span style="background:var(--mcd-red);color:#fff">肉${(p.allocPatty*100)|0}%</span>
+                <span style="background:var(--orange);color:#fff">酱${(p.allocSauce*100)|0}%</span>
+            </div>
+        </div>
+    `).join('');
+}
+
+async function createFromPreset(presetId) {
+    const p = presets.find(x => x.id === presetId);
+    if (!p) return;
+    try {
+        const r = await fetch(`${API}/api/burgers`, {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ name: p.name, emoji: p.emoji, baseId: p.baseId, pattyId: p.pattyId, sauceId: p.sauceId, allocBase: p.allocBase, allocPatty: p.allocPatty, allocSauce: p.allocSauce, symbol: 'BTCUSDT', exchangeType: 'mock' })
+        });
+        const d = await r.json();
+        if (d.ok) { burgerStates.set(d.data.id, d.data); renderBurgerCards(); showToast(`🍔 ${p.name} 已创建`); switchPage('dashboard'); }
+    } catch (e) { showToast('创建失败', 'error'); }
+}
+
+async function loadBurgers() {
+    try {
+        const r = await fetch(`${API}/api/burgers`);
+        const d = await r.json();
+        if (d.ok) { d.data.forEach(b => burgerStates.set(b.id, b)); renderBurgerCards(); }
+    } catch (e) {}
+}
+
+async function createBurger() {
+    const name = document.getElementById('b-name').value.trim() || '自定义汉堡';
+    const emoji = document.getElementById('b-emoji').value || '🍔';
+    const baseId = document.getElementById('b-base').value;
+    const pattyId = document.getElementById('b-patty').value;
+    const sauceId = document.getElementById('b-sauce').value;
+    const symbol = document.getElementById('b-symbol').value;
+    const exchangeType = document.getElementById('b-exchange').value;
+    const apiKey = document.getElementById('b-apiKey').value;
+    const apiSecret = document.getElementById('b-apiSecret').value;
+    if (!pattyId) { showToast('请至少选择一个核心肉饼', 'error'); return; }
+    try {
+        const r = await fetch(`${API}/api/burgers`, {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ name, emoji, baseId, pattyId, sauceId, symbol, exchangeType, exchangeConfig: { apiKey, apiSecret } })
+        });
+        const d = await r.json();
+        if (d.ok) { burgerStates.set(d.data.id, d.data); renderBurgerCards(); showToast(`🍔 ${name} 已创建`); document.getElementById('b-name').value = ''; switchPage('dashboard'); }
+    } catch (e) { showToast('创建失败', 'error'); }
+}
+
+function toggleApiFields() {
+    const exchange = document.getElementById('b-exchange').value;
+    const show = (exchange === 'gate' || exchange === 'binance' || exchange === 'okx');
+    document.getElementById('api-key-group').style.display = show ? 'flex' : 'none';
+    document.getElementById('api-secret-group').style.display = show ? 'flex' : 'none';
+}
+
+async function startAllBurgers() {
+    try { await fetch(`${API}/api/kitchen/start-all`, { method: 'POST' }); showToast('🍳 一键出餐！'); setTimeout(loadBurgers, 500); }
+    catch (e) { showToast('启动失败', 'error'); }
+}
+
+function stopAllBurgers() {
+    fetch(`${API}/api/kitchen/stop-all`, { method: 'POST' }).then(() => { showToast('⏹ 全部关火'); setTimeout(loadBurgers, 500); });
+}
+
+async function startBurger(id) {
+    try { const r = await fetch(`${API}/api/burgers/${id}/start`, { method: 'POST' }); const d = await r.json();
+        if (d.ok) { burgerStates.set(id, d.data); renderBurgerCards(); showToast(`▶ ${d.data.name} 已启动`); }
+    } catch (e) { showToast('启动失败', 'error'); }
+}
+
+async function stopBurger(id) {
+    try { const r = await fetch(`${API}/api/burgers/${id}/stop`, { method: 'POST' }); const d = await r.json();
+        if (d.ok) { burgerStates.set(id, d.data); renderBurgerCards(); showToast(`⏸ ${d.data.name} 已停止`); }
+    } catch (e) { showToast('停止失败', 'error'); }
+}
+
+async function deleteBurger(id) {
+    const b = burgerStates.get(id);
+    if (!b || !confirm(`确定删除 "${b.name}" 吗？`)) return;
+    try { await fetch(`${API}/api/burgers/${id}`, { method: 'DELETE' }); burgerStates.delete(id); renderBurgerCards(); showToast(`🗑 ${b.name} 已删除`); }
+    catch (e) { showToast('删除失败', 'error'); }
+}
+
+// WebSocket
+function connectWS() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(`${proto}//${location.host}`);
+    ws.onopen = () => { document.getElementById('ws-dot').className = 'ws-dot on'; document.getElementById('ws-text').textContent = '已连接'; };
+    ws.onmessage = (e) => { try { handleWSMsg(JSON.parse(e.data)); } catch (err) {} };
+    ws.onclose = () => { document.getElementById('ws-dot').className = 'ws-dot off'; document.getElementById('ws-text').textContent = '已断开'; setTimeout(connectWS, 3000); };
+    ws.onerror = () => ws.close();
+}
+
+function handleWSMsg(msg) {
+    const { type, data } = msg;
+    if ((type === 'burger_state' || type === 'burger_created') && data?.id) {
+        burgerStates.set(data.id, data); renderBurgerCard(data.id);
+    } else if (type === 'burger_deleted' && data?.id) {
+        burgerStates.delete(data.id); renderBurgerCards();
+    } else if (type === 'kitchen_stats') {
+        updateStatsBar(data); renderRankingsTable(data.rankings || []);
+    } else if (type === 'tick' && data?.burgerId) {
+        const prev = burgerStates.get(data.burgerId);
+        if (prev) { burgerStates.set(data.burgerId, { ...prev, ...data }); renderBurgerCard(data.burgerId); }
+    } else if (type === 'trade' && data?.burgerId) {
+        const prev = burgerStates.get(data.burgerId);
+        if (prev) { if (!prev.trades) prev.trades = []; prev.trades.push(data); burgerStates.set(data.burgerId, prev); renderBurgerCard(data.burgerId); }
+    } else if (type === 'log' && data?.burgerId) {
+        const prev = burgerStates.get(data.burgerId);
+        if (prev) { if (!prev.logs) prev.logs = []; prev.logs.push(data); if (!prev._miniLogs) prev._miniLogs = []; prev._miniLogs.push(data); if (prev._miniLogs.length > 15) prev._miniLogs.shift(); burgerStates.set(data.burgerId, prev); renderBurgerCard(data.burgerId); }
+    } else if (type === 'burned' && data?.id) {
+        const prev = burgerStates.get(data.id);
+        if (prev) { prev.status = 'burned'; burgerStates.set(data.id, prev); renderBurgerCard(data.id); showToast(`🔥 ${prev.name} 糊了！${data.reason}`, 'error'); }
+    }
+}
+
+function updateStatsBar(s) {
+    const pnl = document.getElementById('stat-pnl');
+    pnl.textContent = `${s.totalPnl >= 0 ? '+' : ''}${s.totalPnl.toFixed(2)}U`;
+    pnl.className = `stat-value ${s.totalPnl >= 0 ? 'pos' : 'neg'}`;
+    document.getElementById('stat-active').textContent = `${s.activeCount}/${s.burgerCount}`;
+    document.getElementById('stat-burned').textContent = s.burnedCount;
+    document.getElementById('stat-trades').textContent = s.totalTrades;
+}
+
+function renderBurgerCards() {
+    const grid = document.getElementById('burger-cards');
+    const empty = document.getElementById('empty-state');
+    if (burgerStates.size === 0) { grid.innerHTML = ''; grid.appendChild(empty); empty.style.display = ''; return; }
+    grid.innerHTML = '';
+    for (const [id] of burgerStates) { const div = document.createElement('div'); div.className = 'burger-card'; div.id = `card-${id}`; div.dataset.id = id; grid.appendChild(div); }
+    for (const [id] of burgerStates) renderBurgerCard(id);
+}
+
+function renderBurgerCard(id) {
+    const b = burgerStates.get(id);
+    const el = document.getElementById(`card-${id}`);
+    if (!b || !el) return;
+    const pnlClass = b.pnl > 0 ? 'pos' : b.pnl < 0 ? 'neg' : 'zero';
+    const pnlSign = b.pnl > 0 ? '+' : '';
+    const isRunning = b.status === 'running';
+    const isBurned = b.status === 'burned';
+    el.className = `burger-card ${isBurned ? 'burned' : ''}`;
+    const rank = b.ranking || {}, ab = b.antiBurn || {}, alloc = b.allocation || {};
+    const logs = b._miniLogs || b.logs || [];
+    const miniLogs = logs.slice(-5).map(l => {
+        const cls = l.level === 'trade' ? (l.message?.includes('买') ? 'log-buy' : 'log-sell') : l.level === 'error' ? 'log-error' : l.level === 'warn' ? 'log-warn' : 'log-info';
+        return `<div class="${cls}">${l.message || ''}</div>`;
+    }).join('');
+
+    el.innerHTML = `
+        <div class="card-head">
+            <div class="card-name"><span class="card-emoji">${b.emoji||'🍔'}</span>${esc(b.name)} ${isRunning?'<span class="live-dot"></span>':''}</div>
+            <span class="status-badge ${b.status}">${isBurned?'🔥 已熔断':isRunning?'运行中':'已停止'}</span>
+        </div>
+        <div class="card-body">
+            <div class="pnl-display ${pnlClass}">${pnlSign}${(b.pnl||0).toFixed(2)}U</div>
+            <div class="metrics">
+                <div class="metric"><div class="metric-label">胜率</div><div class="metric-value">${(rank.winRate||0).toFixed(0)}%</div></div>
+                <div class="metric"><div class="metric-label">交易</div><div class="metric-value">${rank.totalTrades||b.totalTrades||0}</div></div>
+                <div class="metric"><div class="metric-label">评分</div><div class="metric-value">${(rank.score||0).toFixed(1)}</div></div>
+            </div>
+            <div class="alloc-bar">
+                <div class="base" style="width:${(alloc.base||0.6)*100}%"></div>
+                <div class="patty" style="width:${(alloc.patty||0.3)*100}%"></div>
+                <div class="sauce" style="width:${(alloc.sauce||0.1)*100}%"></div>
+            </div>
+            ${isBurned ? `<div class="anti-burn warn">🔥 已熔断 · 连亏 ${ab.consecutiveLosses||0} 次</div>` :
+              (ab.consecutiveLosses > 0 ? `<div class="anti-burn warn">⚠️ 连亏 ${ab.consecutiveLosses}/${ab.maxConsecutiveLosses||3}</div>` :
+              `<div class="anti-burn ok">✅ 运行正常</div>`)}
+            <div class="card-tags">
+                <span class="tag">📈 ${b.symbol||'BTCUSDT'}</span>
+                <span class="tag">🍞 ${b.baseId||'-'}</span>
+                <span class="tag">🥩 ${b.pattyId||'-'}</span>
+                ${b.sauceId&&b.sauceId!=='none'?`<span class="tag">🫙 ${b.sauceId}</span>`:''}
+                <span class="tag">🏦 ${b.exchangeType||'mock'}</span>
+            </div>
+            <canvas class="mini-chart" id="chart-${id}"></canvas>
+        </div>
+        <div class="card-foot">
+            ${isRunning ? `<button class="btn btn-gray btn-sm" onclick="stopBurger('${id}')">⏹ 停止</button>` : `<button class="btn btn-green btn-sm" onclick="startBurger('${id}')">▶ 启动</button>`}
+            <button class="btn btn-yellow btn-sm" onclick="showDetail('${id}')">📋 详情</button>
+            <button class="btn btn-gray btn-sm" onclick="deleteBurger('${id}')">🗑</button>
+        </div>
+        <div style="padding:8px 20px;border-top:1px solid #f5f5f5;background:#fafafa;font-size:10px;color:var(--mcd-gray);font-family:monospace;max-height:60px;overflow-y:auto">
+            ${miniLogs || '<span style="color:#ccc">暂无日志</span>'}
+        </div>
+    `;
+    drawMiniChart(id, b.trades || []);
+}
+
+function drawMiniChart(id, trades) {
+    const canvas = document.getElementById(`chart-${id}`);
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.clientWidth || 300, h = 40;
+    canvas.width = w*2; canvas.height = h*2; canvas.style.width = w+'px'; canvas.style.height = h+'px';
+    ctx.scale(2,2);
+    const sellTrades = trades.filter(t => t.pnl != null);
+    if (sellTrades.length < 2) { ctx.fillStyle='#eee'; ctx.fillRect(0,0,w,h); ctx.fillStyle='#ccc'; ctx.font='10px sans-serif'; ctx.textAlign='center'; ctx.fillText('数据积累中...',w/2,h/2+3); return; }
+    let cum=0; const points=sellTrades.map(t=>{cum+=t.pnl;return cum;});
+    const min=Math.min(...points,0),max=Math.max(...points,0.01),range=max-min||1,pad=4;
+    const zeroY=pad+(1-(-min/range))*(h-pad*2);
+    ctx.strokeStyle='#e0e0e0';ctx.lineWidth=0.5;ctx.beginPath();ctx.moveTo(pad,zeroY);ctx.lineTo(w-pad,zeroY);ctx.stroke();
+    ctx.strokeStyle=points[points.length-1]>=0?'#4CAF50':'#F44336';ctx.lineWidth=1.5;ctx.beginPath();
+    points.forEach((p,i)=>{const x=pad+(i/(points.length-1))*(w-pad*2);const y=pad+(1-(p-min)/range)*(h-pad*2);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});
+    ctx.stroke();
+    const lastX=pad+(w-pad*2);ctx.lineTo(lastX,zeroY);ctx.lineTo(pad,zeroY);ctx.closePath();
+    ctx.fillStyle=points[points.length-1]>=0?'rgba(76,175,80,0.08)':'rgba(244,67,54,0.08)';ctx.fill();
+}
+
+async function updateRankings() {
+    try { const r=await fetch(`${API}/api/kitchen/stats`); const d=await r.json();
+        if(d.ok){updateStatsBar(d.data);renderRankingsTable(d.data.rankings||[]);}
+    } catch(e){}
+}
+
+function renderRankingsTable(rankings) {
+    const tbody=document.getElementById('rankings-body');
+    if(!rankings||rankings.length===0){tbody.innerHTML='<tr><td colspan="7" style="text-align:center;color:var(--mcd-gray);padding:40px">暂无数据</td></tr>';return;}
+    tbody.innerHTML=rankings.map(r=>{
+        const rc=r.rank===1?'rank-1':r.rank===2?'rank-2':r.rank===3?'rank-3':'';
+        const sc=r.status==='running'?'running':r.burned?'burned':'idle';
+        return `<tr><td class="rank-num ${rc}">${r.rank}</td><td>${r.emoji||'🍔'} ${esc(r.name)}</td><td><strong>${(r.score||0).toFixed(1)}</strong></td><td>${(r.winRate||0).toFixed(0)}%</td><td style="color:${(r.pnl||0)>=0?'var(--green)':'var(--red)'}">${(r.pnl||0)>=0?'+':''}${(r.pnl||0).toFixed(2)}U</td><td><span class="status-badge ${sc}" style="font-size:10px">${r.status==='running'?'运行中':r.burned?'熔断':'停止'}</span></td><td>${r.consecutiveLosses||0}</td></tr>`;
+    }).join('');
+}
+
+function showDetail(id) {
+    currentDetailId=id; const b=burgerStates.get(id); if(!b)return;
+    document.getElementById('modal-title').textContent=`${b.emoji||'🍔'} ${b.name} 详情`;
+    document.getElementById('modal-bg').classList.add('open'); document.body.style.overflow='hidden';
+    renderDetailTabs(b);
+}
+
+function closeModal() { document.getElementById('modal-bg').classList.remove('open'); document.body.style.overflow=''; currentDetailId=null; }
+
+function renderDetailTabs(b) {
+    const rank=b.ranking||{}, ab=b.antiBurn||{};
+    document.getElementById('tab-overview').innerHTML=`
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;background:var(--mcd-light);border-radius:var(--rs);padding:16px;margin-bottom:16px">
+            <div><div style="font-size:11px;color:var(--mcd-gray)">策略 (肉饼)</div><div style="font-weight:600">${b.pattyId||'-'}</div></div>
+            <div><div style="font-size:11px;color:var(--mcd-gray)">交易所</div><div style="font-weight:600">${b.exchangeType||'-'}</div></div>
+            <div><div style="font-size:11px;color:var(--mcd-gray)">交易对</div><div style="font-weight:600">${b.symbol||'-'}</div></div>
+            <div><div style="font-size:11px;color:var(--mcd-gray)">状态</div><div style="font-weight:600">${b.status}</div></div>
+            <div><div style="font-size:11px;color:var(--mcd-gray)">总盈亏</div><div style="font-weight:600;color:${(b.pnl||0)>=0?'var(--green)':'var(--red)'}">${(b.pnl||0)>=0?'+':''}${(b.pnl||0).toFixed(2)}U</div></div>
+            <div><div style="font-size:11px;color:var(--mcd-gray)">胜率</div><div style="font-weight:600">${(rank.winRate||0).toFixed(1)}%</div></div>
+            <div><div style="font-size:11px;color:var(--mcd-gray)">防焦连亏</div><div style="font-weight:600">${ab.consecutiveLosses||0}/${ab.maxConsecutiveLosses||3}</div></div>
+            <div><div style="font-size:11px;color:var(--mcd-gray)">分配</div><div style="font-weight:600;font-size:11px">底${((b.allocation||{}).base||0.6)*100|0}% 肉${((b.allocation||{}).patty||0.3)*100|0}% 酱${((b.allocation||{}).sauce||0.1)*100|0}%</div></div>
+        </div>
+        <div class="chart-area"><canvas id="detail-chart" width="672" height="180"></canvas></div>
+    `;
+    const trades=b.trades||[];
+    document.getElementById('tab-trades').innerHTML=trades.length?`<table class="trade-table"><thead><tr><th>时间</th><th>方向</th><th>价格</th><th>数量</th><th>盈亏</th><th>原因</th></tr></thead><tbody>${trades.slice().reverse().map(t=>`<tr><td>${t.time?new Date(t.time).toLocaleString():'-'}</td><td style="color:${t.side==='BUY'?'var(--green)':'var(--red)'};font-weight:600">${t.side==='BUY'?'🟢 买':'🔴 卖'}</td><td>${t.price?.toLocaleString()||'-'}</td><td>${t.quantity||'-'}</td><td style="color:${(t.pnl||0)>=0?'var(--green)':'var(--red)'}">${t.pnl!=null?((t.pnl>=0?'+':'')+t.pnl.toFixed(2)+'U'):'-'}</td><td style="font-size:11px;color:var(--mcd-gray)">${esc(t.reason||'-')}</td></tr>`).join('')}</tbody></table>`:'<div class="empty"><div class="empty-icon">📭</div><p>暂无交易</p></div>';
+    const signals=b.signals||[];
+    document.getElementById('tab-signals').innerHTML=signals.length?`<table class="trade-table"><thead><tr><th>时间</th><th>信号</th><th>价格</th><th>置信</th><th>原因</th></tr></thead><tbody>${signals.slice().reverse().slice(0,50).map(s=>`<tr><td>${s.time?new Date(s.time).toLocaleTimeString():'-'}</td><td style="font-weight:600;color:${s.signal==='BUY'?'var(--green)':s.signal==='SELL'?'var(--red)':'var(--mcd-gray)'}">${s.signal}</td><td>${s.price?.toLocaleString()||'-'}</td><td>${s.confidence?(s.confidence*100).toFixed(0)+'%':'-'}</td><td style="font-size:11px;color:var(--mcd-gray)">${esc(s.reason||'-')}</td></tr>`).join('')}</tbody></table>`:'<div class="empty"><div class="empty-icon">📡</div><p>暂无信号</p></div>';
+    const logs=b.logs||[];
+    document.getElementById('tab-logs').innerHTML=logs.length?`<div style="max-height:400px;overflow-y:auto;font-family:monospace;font-size:11px;line-height:2">${logs.slice().reverse().map(l=>{const cls=l.level==='trade'?(l.message?.includes('买')?'log-buy':'log-sell'):l.level==='error'?'log-error':l.level==='warn'?'log-warn':'log-info';const ts=l.time?new Date(l.time).toLocaleTimeString():'';return`<div class="log-line ${cls}">[${ts}] ${l.message||''}</div>`;}).join('')}</div>`:'<div class="empty"><div class="empty-icon">📋</div><p>暂无日志</p></div>';
+    drawDetailChart(b);
+}
+
+function drawDetailChart(b) {
+    const canvas=document.getElementById('detail-chart'); if(!canvas)return;
+    const ctx=canvas.getContext('2d'),w=672,h=180; ctx.clearRect(0,0,w,h);
+    const trades=(b.trades||[]).filter(t=>t.pnl!=null);
+    if(trades.length<2){ctx.fillStyle='#ccc';ctx.font='13px sans-serif';ctx.textAlign='center';ctx.fillText('盈亏数据不足',w/2,h/2);return;}
+    let cum=0;const points=trades.map(t=>{cum+=t.pnl;return cum;});
+    const min=Math.min(...points,0),max=Math.max(...points,0.01),range=max-min||1,pad=30;
+    const zeroY=pad+(1-(-min/range))*(h-pad*2);
+    ctx.strokeStyle='#e0e0e0';ctx.lineWidth=1;ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(pad,zeroY);ctx.lineTo(w-pad,zeroY);ctx.stroke();ctx.setLineDash([]);
+    ctx.strokeStyle=points[points.length-1]>=0?'#4CAF50':'#F44336';ctx.lineWidth=2;ctx.beginPath();
+    points.forEach((p,i)=>{const x=pad+(i/(points.length-1))*(w-pad*2);const y=pad+(1-(p-min)/range)*(h-pad*2);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});ctx.stroke();
+    const lastX=pad+(w-pad*2);ctx.lineTo(lastX,zeroY);ctx.lineTo(pad,zeroY);ctx.closePath();
+    ctx.fillStyle=points[points.length-1]>=0?'rgba(76,175,80,0.08)':'rgba(244,67,54,0.08)';ctx.fill();
+    const lastY=pad+(1-(points[points.length-1]-min)/range)*(h-pad*2);ctx.fillStyle=ctx.strokeStyle;ctx.beginPath();ctx.arc(lastX,lastY,4,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#999';ctx.font='10px sans-serif';ctx.textAlign='right';ctx.fillText(max.toFixed(1),pad-4,pad+4);ctx.fillText('0',pad-4,zeroY+3);ctx.fillText(min.toFixed(1),pad-4,h-pad+4);
+}
+
+function switchPage(page) {
+    document.querySelectorAll('.nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.page===page));
+    document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id===`page-${page}`));
+    if(page==='rankings')updateRankings();
+}
+
+document.querySelectorAll('.nav-btn').forEach(btn=>{btn.addEventListener('click',()=>{switchPage(btn.dataset.page);document.querySelector('.sidebar').classList.remove('open');document.querySelector('.sidebar-ov').classList.remove('show');});});
+document.querySelectorAll('.tab-btn').forEach(btn=>{btn.addEventListener('click',()=>{document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active',b===btn));document.querySelectorAll('.tab-panel').forEach(p=>p.classList.toggle('active',p.id===`tab-${btn.dataset.tab}`));});});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
+function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML;}
+setInterval(()=>{const el=document.getElementById('clock');if(el)el.textContent='🕐 '+new Date().toLocaleTimeString();},1000);
+
+init();
+</script>
+</body>
+</html>
