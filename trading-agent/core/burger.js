@@ -32,6 +32,9 @@ class BurgerStrategy {
 
         // === 交易参数 ===
         this.symbol = config.symbol || 'BTCUSDT';
+        this.tradeType = config.tradeType || 'spot';    // spot | futures
+        this.leverage = config.leverage || 1;            // 杠杆倍率 (仅合约)
+        this.marginMode = config.marginMode || 'isolated'; // isolated | cross
         this.exchangeType = config.exchangeType || 'mock';
         this.exchangeConfig = config.exchangeConfig || {};
         this.interval = config.interval || 3000;
@@ -306,13 +309,49 @@ class BurgerStrategy {
         this.onUpdate({ type: 'status', data: { id: this.id, status: this.status } });
     }
 
-    // === 交易执行 (基于资金分配) ===
+    // === 交易执行 (基于资金分配 + 杠杆) ===
     _calculatePositionSize(price) {
         // 田忌赛马：根据分配比例计算仓位
         const pattyCapital = this.totalCapital * this.allocPatty;
         const tradeAmount = pattyCapital * 0.1; // 每次用 patty 资金的 10%
+
+        if (this.tradeType === 'futures' && this.leverage > 1) {
+            // 合约：杠杆放大仓位，但风险也放大
+            // 仓位 = 资金 * 杠杆 / 价格
+            const leveragedAmount = tradeAmount * this.leverage;
+            const qty = leveragedAmount / price;
+            return parseFloat(qty.toFixed(6));
+        }
+
+        // 现货：直接用资金买入
         const qty = tradeAmount / price;
         return parseFloat(qty.toFixed(6));
+    }
+
+    // === 强平价格计算 ===
+    _calculateLiquidationPrice(entryPrice, side) {
+        if (this.tradeType !== 'futures' || this.leverage <= 1) return null;
+
+        // 逐仓强平公式 (简化版)
+        // 多头强平价 = 开仓价 * (1 - 1/杠杆 + 维持保证金率)
+        // 空头强平价 = 开仓价 * (1 + 1/杠杆 - 维持保证金率)
+        const maintenanceRate = 0.005; // 维持保证金率 0.5%
+        if (side === 'BUY') {
+            return entryPrice * (1 - 1 / this.leverage + maintenanceRate);
+        } else {
+            return entryPrice * (1 + 1 / this.leverage - maintenanceRate);
+        }
+    }
+
+    // === 最大可承受亏损 ===
+    _calculateMaxLoss(entryPrice, qty) {
+        if (this.tradeType !== 'futures') {
+            // 现货最大亏损 = 全部投入
+            return entryPrice * qty;
+        }
+        // 合约最大亏损 = 保证金 (逐仓模式)
+        const margin = (entryPrice * qty) / this.leverage;
+        return margin;
     }
 
     async _executeBuy(price, reason, confidence) {
@@ -335,6 +374,9 @@ class BurgerStrategy {
             this.entryPrice = this.position > 0 ? price : this.entryPrice;
             this.balance.USDT -= qty * order.price;
 
+            const liquidationPrice = this._calculateLiquidationPrice(order.price, 'BUY');
+            const maxLoss = this._calculateMaxLoss(order.price, qty);
+
             const trade = {
                 burgerId: this.id,
                 id: order.orderId,
@@ -342,12 +384,17 @@ class BurgerStrategy {
                 side: 'BUY',
                 price: order.price,
                 quantity: qty,
+                tradeType: this.tradeType,
+                leverage: this.leverage,
+                liquidationPrice,
+                margin: this.tradeType === 'futures' ? (order.price * qty) / this.leverage : null,
                 reason,
                 confidence
             };
             this.trades.push(trade);
             this._tradeCount++;
-            this.log('trade', `🟢 买入 ${qty} @ ${order.price}`, { reason, confidence: `${(confidence * 100).toFixed(0)}%` });
+            const typeLabel = this.tradeType === 'futures' ? `⚡合约 ${this.leverage}x` : '💎现货';
+            this.log('trade', `🟢 买入 ${qty} @ ${order.price} [${typeLabel}]`, { reason, confidence: `${(confidence * 100).toFixed(0)}%`, liquidationPrice });
             this.onUpdate({ type: 'trade', data: trade });
         } catch (err) {
             this.log('error', `❌ 买入失败: ${err.message}`);
@@ -364,7 +411,14 @@ class BurgerStrategy {
         const qty = Math.min(this._calculatePositionSize(price), this.position);
         try {
             const order = await this._exchange.placeOrder(this.symbol, 'SELL', 'MARKET', qty, price);
-            const tradePnl = (order.price - this.entryPrice) * qty;
+
+            // PnL计算 (合约需乘以杠杆倍率)
+            let tradePnl;
+            if (this.tradeType === 'futures') {
+                tradePnl = (order.price - this.entryPrice) * qty * this.leverage;
+            } else {
+                tradePnl = (order.price - this.entryPrice) * qty;
+            }
             this.pnl += tradePnl;
             this.position -= qty;
             this.balance.USDT += qty * order.price;
@@ -383,12 +437,16 @@ class BurgerStrategy {
                 side: 'SELL',
                 price: order.price,
                 quantity: qty,
+                tradeType: this.tradeType,
+                leverage: this.leverage,
                 pnl: parseFloat(tradePnl.toFixed(2)),
                 reason,
                 confidence
             };
             this.trades.push(trade);
-            this.log('trade', `🔴 卖出 ${qty} @ ${order.price} | 盈亏: ${trade.pnl >= 0 ? '+' : ''}${trade.pnl.toFixed(2)}U`, { reason, confidence: `${(confidence * 100).toFixed(0)}%` });
+            const typeLabel = this.tradeType === 'futures' ? `⚡${this.leverage}x` : '💎';
+            const pnlSign = tradePnl >= 0 ? '+' : '';
+            this.log('trade', `🔴 卖出 ${qty} @ ${order.price} [${typeLabel}] | 盈亏: ${pnlSign}${tradePnl.toFixed(2)}U`, { reason, confidence: `${(confidence * 100).toFixed(0)}%` });
             this.onUpdate({ type: 'trade', data: trade });
 
             if (this.position <= 0) this.entryPrice = 0;
@@ -432,6 +490,9 @@ class BurgerStrategy {
             emoji: this.emoji,
             status: this.status,
             symbol: this.symbol,
+            tradeType: this.tradeType,       // spot | futures
+            leverage: this.leverage,         // 杠杆倍率
+            marginMode: this.marginMode,     // isolated | cross
             baseId: this.baseId,
             pattyId: this.pattyId,
             sauceId: this.sauceId,

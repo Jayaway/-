@@ -156,16 +156,20 @@ class MockExchange {
     }
 }
 
-// ===== Binance 适配器 (公开行情 + 可选私有) =====
+// ===== Binance 适配器 (公开行情 + 可选私有 + 合约支持) =====
 class BinanceAdapter {
     constructor(config = {}) {
         this.name = 'Binance';
         this.apiKey = config.apiKey || '';
         this.apiSecret = config.apiSecret || '';
         this.baseURL = config.baseURL || 'https://api.binance.com';
-        this.publicOnly = !this.apiKey || !this.apiSecret; // 无密钥则仅公开行情
+        this.futuresBaseURL = 'https://fapi.binance.com'; // 合约 API
+        this.publicOnly = !this.apiKey || !this.apiSecret;
         this._simBalance = { USDT: { free: 50000, locked: 0 } };
         this._orderCounter = 0;
+        this.tradeType = config.tradeType || 'spot';
+        this.leverage = config.leverage || 1;
+        this.marginMode = config.marginMode || 'isolated';
     }
 
     _sign(params) {
@@ -175,7 +179,6 @@ class BinanceAdapter {
     }
 
     async getTicker(symbol) {
-        // 使用 24hr ticker 获取更丰富的数据 (含 bid/ask/volume)
         const data = await request(`${this.baseURL}/api/v3/ticker/24hr?symbol=${symbol}`);
         return {
             symbol: data.symbol,
@@ -200,20 +203,33 @@ class BinanceAdapter {
         }));
     }
 
-    async placeOrder(symbol, side, type, quantity, price) {
-        // 公开模式：模拟下单
+    async setLeverage(symbol, leverage) {
+        if (this.publicOnly) return;
+        const params = { symbol, leverage, timestamp: Date.now() };
+        const signed = this._sign(params);
+        await request(`${this.futuresBaseURL}/fapi/v1/leverage?${signed}`, {
+            method: 'POST',
+            headers: { 'X-MBX-APIKEY': this.apiKey }
+        }).catch(() => {});
+    }
+
+    async placeOrder(symbol, side, type, quantity, price, options = {}) {
+        const tradeType = options.tradeType || this.tradeType;
+        const leverage = options.leverage || this.leverage;
+
+        // 模拟下单
         if (this.publicOnly) {
             this._orderCounter++;
             const execPrice = price || this._lastPrice || 0;
-            // 更新模拟余额
-            if (side === 'BUY') {
-                this._simBalance.USDT.free -= quantity * execPrice;
+            if (tradeType === 'futures') {
+                const pnl = side === 'BUY' ? -quantity * execPrice * 0.001 : quantity * execPrice * 0.001;
+                this._simBalance.USDT.free += pnl;
             } else {
-                this._simBalance.USDT.free += quantity * execPrice;
+                this._simBalance.USDT.free += side === 'BUY' ? -quantity * execPrice : quantity * execPrice;
             }
             return {
                 orderId: `BINANCE-PUB-${Date.now()}-${this._orderCounter}`,
-                symbol, side, type,
+                symbol, side, type, tradeType, leverage,
                 quantity: parseFloat(quantity.toFixed(6)),
                 price: parseFloat(execPrice.toFixed(2)),
                 status: 'FILLED',
@@ -222,7 +238,42 @@ class BinanceAdapter {
             };
         }
 
-        // 私有模式：真实下单
+        // ===== 合约下单 =====
+        if (tradeType === 'futures') {
+            // 设置杠杆
+            if (leverage > 1) {
+                await this.setLeverage(symbol, leverage);
+            }
+
+            const params = {
+                symbol, side, type,
+                quantity: quantity.toString(),
+                timestamp: Date.now(),
+                recvWindow: 5000
+            };
+            if (type === 'LIMIT' && price) params.price = price.toString();
+            if (type === 'LIMIT') params.timeInForce = 'GTC';
+
+            const signed = this._sign(params);
+            const data = await request(`${this.futuresBaseURL}/fapi/v1/order?${signed}`, {
+                method: 'POST',
+                headers: { 'X-MBX-APIKEY': this.apiKey }
+            });
+            return {
+                orderId: String(data.orderId),
+                symbol: data.symbol,
+                side: data.side,
+                type: data.type,
+                tradeType: 'futures',
+                leverage,
+                quantity: parseFloat(data.executedQty || data.origQty),
+                price: parseFloat(data.avgPrice || data.price || price || 0),
+                status: data.status,
+                timestamp: data.updateTime || Date.now()
+            };
+        }
+
+        // ===== 现货下单 =====
         const params = {
             symbol, side, type,
             quantity: quantity.toString(),
@@ -233,16 +284,17 @@ class BinanceAdapter {
         if (type === 'LIMIT') params.timeInForce = 'GTC';
 
         const signed = this._sign(params);
-        const data = await request(`${this.baseURL}/api/v3/order`, {
+        const data = await request(`${this.baseURL}/api/v3/order?${signed}`, {
             method: 'POST',
-            headers: { 'X-MBX-APIKEY': this.apiKey },
-            body: signed
+            headers: { 'X-MBX-APIKEY': this.apiKey }
         });
         return {
             orderId: String(data.orderId),
             symbol: data.symbol,
             side: data.side,
             type: data.type,
+            tradeType: 'spot',
+            leverage: 1,
             quantity: parseFloat(data.executedQty || data.origQty),
             price: parseFloat(data.fills?.[0]?.price || price || 0),
             status: data.status,
@@ -251,12 +303,23 @@ class BinanceAdapter {
     }
 
     async getBalance() {
-        // 公开模式：返回模拟余额
-        if (this.publicOnly) {
-            return this._simBalance;
+        if (this.publicOnly) return this._simBalance;
+
+        if (this.tradeType === 'futures') {
+            const params = { timestamp: Date.now(), recvWindow: 5000 };
+            const signed = this._sign(params);
+            const data = await request(`${this.futuresBaseURL}/fapi/v2/account?${signed}`, {
+                headers: { 'X-MBX-APIKEY': this.apiKey }
+            });
+            return {
+                USDT: {
+                    free: parseFloat(data.availableBalance || 0),
+                    locked: parseFloat(data.totalMarginBalance || 0) - parseFloat(data.availableBalance || 0),
+                    unrealisedPnl: parseFloat(data.totalUnrealizedProfit || 0)
+                }
+            };
         }
 
-        // 私有模式：真实查询
         const params = { timestamp: Date.now(), recvWindow: 5000 };
         const signed = this._sign(params);
         const data = await request(`${this.baseURL}/api/v3/account?${signed}`, {
@@ -522,10 +585,13 @@ class GateAdapter {
         this.name = 'Gate.io';
         this.apiKey = config.apiKey || '';
         this.apiSecret = config.apiSecret || '';
-        this.baseURL = config.baseURL || 'https://api.gateio.ws'; // 主网
+        this.baseURL = config.baseURL || 'https://api.gateio.ws';
         this.publicOnly = !this.apiKey || !this.apiSecret;
         this._simBalance = { USDT: { free: 50000, locked: 0 } };
         this._orderCounter = 0;
+        this.tradeType = config.tradeType || 'spot'; // spot | futures
+        this.leverage = config.leverage || 1;
+        this.marginMode = config.marginMode || 'isolated';
     }
 
     _sign(timestamp, method, url, body = '') {
@@ -544,9 +610,16 @@ class GateAdapter {
         };
     }
 
+    _getSpotSymbol(symbol) {
+        return symbol.replace('USDT', '_USDT'); // BTC_USDT
+    }
+
+    _getFuturesSymbol(symbol) {
+        return symbol.replace('USDT', '_USDT') + '_USDT'; // BTC_USDT_USDT (永续)
+    }
+
     async getTicker(symbol) {
-        // Gate.io 格式: BTC_USDT
-        const gateSymbol = symbol.replace('USDT', '_USDT');
+        const gateSymbol = this._getSpotSymbol(symbol);
         const path = `/api/v4/spot/tickers?currency_pair=${gateSymbol}`;
         const data = await request(`${this.baseURL}${path}`);
         const ticker = Array.isArray(data) ? data[0] : data;
@@ -562,8 +635,8 @@ class GateAdapter {
     }
 
     async getKlines(symbol, interval = '1m', limit = 100) {
-        const gateSymbol = symbol.replace('USDT', '_USDT');
-        // Gate.io interval映射
+        // 合约和现货共用行情数据
+        const gateSymbol = this._getSpotSymbol(symbol);
         const intervalMap = { '1m': '1m', '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1h', '4h': '4h', '1d': '1d' };
         const gateInterval = intervalMap[interval] || '1m';
         const to = Math.floor(Date.now() / 1000);
@@ -580,18 +653,34 @@ class GateAdapter {
         }));
     }
 
-    async placeOrder(symbol, side, type, quantity, price) {
+    async setLeverage(symbol, leverage) {
+        if (this.publicOnly || this.tradeType !== 'futures') return;
+        const gateSymbol = this._getFuturesSymbol(symbol);
+        const settle = 'usdt';
+        const path = `/api/v4/futures/${settle}/dual_comp/position/${gateSymbol}`;
+        const body = JSON.stringify({ leverage: leverage.toString(), cross_leverage_limit: '0' });
+        await request(`${this.baseURL}${path}`, {
+            method: 'POST',
+            headers: this._headers('POST', path, body),
+            body
+        }).catch(() => {});
+    }
+
+    async placeOrder(symbol, side, type, quantity, price, options = {}) {
+        const tradeType = options.tradeType || this.tradeType;
+        const leverage = options.leverage || this.leverage;
+
+        // 模拟下单
         if (this.publicOnly) {
             this._orderCounter++;
             const execPrice = price || 0;
-            if (side === 'BUY') {
-                this._simBalance.USDT.free -= quantity * execPrice;
-            } else {
-                this._simBalance.USDT.free += quantity * execPrice;
-            }
+            const pnl = tradeType === 'futures'
+                ? (side === 'BUY' ? -quantity * execPrice * 0.001 : quantity * execPrice * 0.001)
+                : (side === 'BUY' ? -quantity * execPrice : quantity * execPrice);
+            this._simBalance.USDT.free += pnl;
             return {
                 orderId: `GATE-${Date.now()}-${this._orderCounter}`,
-                symbol, side, type,
+                symbol, side, type, tradeType, leverage,
                 quantity: parseFloat(quantity.toFixed(6)),
                 price: parseFloat(execPrice.toFixed(2)),
                 status: 'FILLED',
@@ -600,7 +689,46 @@ class GateAdapter {
             };
         }
 
-        const gateSymbol = symbol.replace('USDT', '_USDT');
+        // ===== 合约下单 =====
+        if (tradeType === 'futures') {
+            const gateSymbol = this._getFuturesSymbol(symbol);
+            const settle = 'usdt';
+
+            // 设置杠杆
+            if (leverage > 1) {
+                await this.setLeverage(symbol, leverage);
+            }
+
+            const path = `/api/v4/futures/${settle}/orders`;
+            const body = JSON.stringify({
+                contract: gateSymbol,
+                size: side === 'BUY' ? quantity : -quantity, // 合约 size 正=买, 负=卖
+                price: type === 'MARKET' ? '0' : price?.toString() || '0',
+                tif: type === 'MARKET' ? 'ioc' : 'gtc',
+                ...(this.marginMode === 'cross' ? { cross: true } : {})
+            });
+
+            const data = await request(`${this.baseURL}${path}`, {
+                method: 'POST',
+                headers: this._headers('POST', path, body),
+                body
+            });
+            return {
+                orderId: String(data.id || data.order_id),
+                symbol,
+                side: side.toUpperCase(),
+                type: type.toUpperCase(),
+                tradeType: 'futures',
+                leverage,
+                quantity: parseFloat(data.size || quantity),
+                price: parseFloat(data.price || price || 0),
+                status: data.status || 'FILLED',
+                timestamp: Date.now()
+            };
+        }
+
+        // ===== 现货下单 =====
+        const gateSymbol = this._getSpotSymbol(symbol);
         const path = '/api/v4/spot/orders';
         const body = JSON.stringify({
             currency_pair: gateSymbol,
@@ -619,6 +747,8 @@ class GateAdapter {
             symbol,
             side: side.toUpperCase(),
             type: type.toUpperCase(),
+            tradeType: 'spot',
+            leverage: 1,
             quantity: parseFloat(data.amount || quantity),
             price: parseFloat(data.price || price || 0),
             status: data.status || 'FILLED',
@@ -627,8 +757,20 @@ class GateAdapter {
     }
 
     async getBalance() {
-        if (this.publicOnly) {
-            return this._simBalance;
+        if (this.publicOnly) return this._simBalance;
+        if (this.tradeType === 'futures') {
+            const settle = 'usdt';
+            const path = `/api/v4/futures/${settle}/accounts`;
+            const data = await request(`${this.baseURL}${path}`, {
+                headers: this._headers('GET', path)
+            });
+            return {
+                USDT: {
+                    free: parseFloat(data.available || 0),
+                    locked: parseFloat(data.in_orders || 0),
+                    unrealisedPnl: parseFloat(data.unrealised_pnl || 0)
+                }
+            };
         }
         const path = '/api/v4/wallet/balances';
         const data = await request(`${this.baseURL}${path}`, {

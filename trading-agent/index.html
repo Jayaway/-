@@ -267,6 +267,9 @@
                         <div class="form-group"><label>核心肉饼 (Patty)</label><select id="b-patty"><option value="">加载中...</option></select></div>
                         <div class="form-group"><label>特殊酱汁 (Sauce)</label><select id="b-sauce"><option value="">加载中...</option></select></div>
                         <div class="form-group"><label>交易对</label><select id="b-symbol"><option value="BTCUSDT">BTC/USDT</option><option value="ETHUSDT">ETH/USDT</option><option value="SOLUSDT">SOL/USDT</option><option value="DOGEUSDT">DOGE/USDT</option><option value="HYPEUSDT">HYPE/USDT</option><option value="BNBUSDT">BNB/USDT</option></select></div>
+                        <div class="form-group"><label>交易类型</label><select id="b-tradetype" onchange="toggleLeverage()"><option value="spot">现货交易</option><option value="futures">合约交易 (USDT本位)</option></select></div>
+                        <div class="form-group" id="leverage-group" style="display:none"><label>杠杆倍率</label><input type="number" id="b-leverage" value="10" min="1" max="125" style="width:80px"> <span style="font-size:11px;color:var(--mcd-gray)">倍</span></div>
+                        <div class="form-group" id="margin-mode-group" style="display:none"><label>保证金模式</label><select id="b-margin"><option value="isolated">逐仓</option><option value="cross">全仓</option></select></div>
                         <div class="form-group"><label>交易所</label><select id="b-exchange" onchange="toggleApiFields()"><option value="mock">实时模拟 (无需API)</option><option value="gate">Gate.io</option><option value="binance-public">Binance (公开行情)</option><option value="okx">OKX</option></select></div>
                         <div class="form-group" id="api-key-group" style="display:none"><label>API Key</label><input type="text" id="b-apiKey" placeholder="API Key"></div>
                         <div class="form-group" id="api-secret-group" style="display:none"><label>API Secret</label><input type="password" id="b-apiSecret" placeholder="API Secret"></div>
@@ -407,6 +410,7 @@ async function init() {
     setInterval(updateRankings, 5000);
     loadTicker();
     setInterval(loadTicker, 10000); // 每10秒刷新行情
+    loadExchangeConfig(); // 恢复交易所配置
 }
 
 // ===== 实时行情 =====
@@ -429,51 +433,90 @@ async function loadTicker() {
         `).join('');
     }
 
-    // 并发获取价格
-    const promises = TICKER_SYMBOLS.map(async (symbol) => {
-        try {
-            // 通过 Gate.io 公开端点获取（无需API）
-            const gateSymbol = symbol.replace('USDT', '_USDT');
-            const r = await fetch(`https://api.gateio.ws/api/v4/spot/tickers?currency_pair=${gateSymbol}`);
-            const data = await r.json();
-            const ticker = Array.isArray(data) ? data[0] : data;
-            return {
-                symbol,
-                price: parseFloat(ticker.last || 0),
-                change: parseFloat(ticker.change_percentage || 0),
-                volume: parseFloat(ticker.base_volume || 0),
-                high: parseFloat(ticker.high_24h || 0),
-                low: parseFloat(ticker.low_24h || 0)
-            };
-        } catch (e) {
-            return { symbol, price: 0, change: 0, volume: 0, high: 0, low: 0, error: true };
-        }
-    });
+    // 通过后端代理获取行情（避免浏览器 CORS）
+    try {
+        const r = await fetch(`${API}/api/tickers`);
+        const d = await r.json();
+        if (!d.ok || !d.data) return;
 
-    const results = await Promise.all(promises);
-    results.forEach(t => {
-        const el = document.getElementById(`ticker-${t.symbol}`);
-        if (!el) return;
-        const isUp = t.change >= 0;
-        const changeClass = isUp ? 'up' : 'down';
-        const arrow = isUp ? '▲' : '▼';
-        const priceStr = t.price >= 1 ? t.price.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : t.price.toFixed(6);
-        
-        el.innerHTML = `
-            <div class="ticker-symbol">${TICKER_EMOJI[t.symbol]} ${t.symbol.replace('USDT','/USDT')} <span style="font-size:11px;color:var(--mcd-gray);font-weight:400">${TICKER_NAMES[t.symbol]}</span></div>
-            <div class="ticker-price" style="color:${isUp?'var(--green)':'var(--red)'}">$${priceStr}</div>
-            <span class="ticker-change ${changeClass}">${arrow} ${Math.abs(t.change).toFixed(2)}%</span>
-            <div class="ticker-meta">
-                <span>24h高: $${t.high >= 1 ? t.high.toLocaleString('en-US',{maximumFractionDigits:2}) : t.high.toFixed(6)}</span>
-                <span>24h低: $${t.low >= 1 ? t.low.toLocaleString('en-US',{maximumFractionDigits:2}) : t.low.toFixed(6)}</span>
-            </div>
-        `;
-    });
+        d.data.forEach(t => {
+            const el = document.getElementById(`ticker-${t.symbol}`);
+            if (!el) return;
+            const isUp = t.change >= 0;
+            const changeClass = isUp ? 'up' : 'down';
+            const arrow = isUp ? '▲' : '▼';
+            const priceStr = t.price >= 1 ? t.price.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : t.price.toFixed(6);
+            
+            el.innerHTML = `
+                <div class="ticker-symbol">${TICKER_EMOJI[t.symbol]||'💰'} ${t.symbol.replace('USDT','/USDT')} <span style="font-size:11px;color:var(--mcd-gray);font-weight:400">${TICKER_NAMES[t.symbol]||''}</span></div>
+                <div class="ticker-price" style="color:${isUp?'var(--green)':'var(--red)'}">$${priceStr}</div>
+                <span class="ticker-change ${changeClass}">${arrow} ${Math.abs(t.change).toFixed(2)}%</span>
+                <div class="ticker-meta">
+                    <span>高: $${t.high >= 1 ? t.high.toLocaleString('en-US',{maximumFractionDigits:2}) : t.high.toFixed(6)}</span>
+                    <span>低: $${t.low >= 1 ? t.low.toLocaleString('en-US',{maximumFractionDigits:2}) : t.low.toFixed(6)}</span>
+                </div>
+            `;
+        });
+    } catch (e) {
+        console.error('Ticker error:', e);
+    }
 }
 
-// ===== 交易所设置 =====
+// ===== 交易所配置（localStorage 持久化）=====
 function saveExchange(type) {
-    showToast(`${type} 配置已保存（本地）`, 'success');
+    const keyInput = document.getElementById(`${type}-key-input`);
+    const secretInput = document.getElementById(`${type}-secret-input`);
+    const passInput = document.getElementById(`${type}-pass-input`);
+    const hostInput = document.getElementById(`${type}-host`);
+    
+    const config = {
+        apiKey: keyInput ? keyInput.value : '',
+        apiSecret: secretInput ? secretInput.value : '',
+        passphrase: passInput ? passInput.value : '',
+        host: hostInput ? hostInput.value : ''
+    };
+    
+    if (!config.apiKey) { showToast('请填写 API Key', 'error'); return; }
+    
+    // 本地存储
+    localStorage.setItem(`exchange_${type}`, JSON.stringify(config));
+    
+    // 同步到后端
+    fetch(`${API}/api/exchange`, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ type, ...config })
+    }).catch(() => {});
+    
+    // 更新状态
+    const card = document.getElementById(`exchange-${type}`);
+    if (card) {
+        const badge = card.querySelector('.exchange-badge');
+        if (badge) { badge.textContent = '已配置'; badge.className = 'exchange-badge connected'; }
+    }
+    
+    showToast(`✅ ${type} 配置已保存`, 'success');
+}
+
+function loadExchangeConfig() {
+    ['gate', 'binance', 'okx'].forEach(type => {
+        const saved = localStorage.getItem(`exchange_${type}`);
+        if (!saved) return;
+        try {
+            const config = JSON.parse(saved);
+            const keyInput = document.getElementById(`${type}-key-input`);
+            const secretInput = document.getElementById(`${type}-secret-input`);
+            const passInput = document.getElementById(`${type}-pass-input`);
+            if (keyInput && config.apiKey) keyInput.value = config.apiKey;
+            if (secretInput && config.apiSecret) secretInput.value = config.apiSecret;
+            if (passInput && config.passphrase) passInput.value = config.passphrase;
+            
+            const card = document.getElementById(`exchange-${type}`);
+            if (card && config.apiKey) {
+                const badge = card.querySelector('.exchange-badge');
+                if (badge) { badge.textContent = '已配置'; badge.className = 'exchange-badge connected'; }
+            }
+        } catch (e) {}
+    });
 }
 
 async function loadStrategies() {
@@ -502,7 +545,21 @@ async function loadPresets() {
 }
 
 function renderPresets() {
-    document.getElementById('preset-grid').innerHTML = presets.map(p => `
+    // 先显示交易对选择提示
+    document.getElementById('preset-grid').innerHTML = `
+        <div style="grid-column:1/-1;display:flex;align-items:center;gap:12px;margin-bottom:8px;padding:12px;background:var(--mcd-light);border-radius:var(--rs)">
+            <span style="font-size:13px;font-weight:600;color:var(--mcd-red)">选择交易对：</span>
+            <select id="preset-symbol" style="padding:8px 12px;border:2px solid var(--mcd-yellow);border-radius:6px;font-size:14px;font-weight:600">
+                <option value="BTCUSDT">BTC/USDT</option>
+                <option value="ETHUSDT">ETH/USDT</option>
+                <option value="SOLUSDT">SOL/USDT</option>
+                <option value="DOGEUSDT">DOGE/USDT</option>
+                <option value="HYPEUSDT">HYPE/USDT</option>
+                <option value="BNBUSDT">BNB/USDT</option>
+            </select>
+            <span style="font-size:11px;color:var(--mcd-gray)">点击预设即用此交易对创建</span>
+        </div>
+    ` + presets.map(p => `
         <div class="preset-card" onclick="createFromPreset('${p.id}')">
             <div class="preset-name">${p.emoji} ${p.name}</div>
             <div class="preset-desc">${p.description}</div>
@@ -518,13 +575,19 @@ function renderPresets() {
 async function createFromPreset(presetId) {
     const p = presets.find(x => x.id === presetId);
     if (!p) return;
+    const presetSym = document.getElementById('preset-symbol');
+    const symbol = (presetSym ? presetSym.value : null) || document.getElementById('b-symbol').value || 'BTCUSDT';
+    const tradeType = document.getElementById('b-tradetype').value || 'spot';
+    const leverage = parseInt(document.getElementById('b-leverage').value) || 10;
+    const marginMode = document.getElementById('b-margin').value || 'isolated';
+    const exchangeType = document.getElementById('b-exchange').value || 'mock';
     try {
         const r = await fetch(`${API}/api/burgers`, {
             method: 'POST', headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({ name: p.name, emoji: p.emoji, baseId: p.baseId, pattyId: p.pattyId, sauceId: p.sauceId, allocBase: p.allocBase, allocPatty: p.allocPatty, allocSauce: p.allocSauce, symbol: 'BTCUSDT', exchangeType: 'mock' })
+            body: JSON.stringify({ name: p.name, emoji: p.emoji, baseId: p.baseId, pattyId: p.pattyId, sauceId: p.sauceId, allocBase: p.allocBase, allocPatty: p.allocPatty, allocSauce: p.allocSauce, symbol, tradeType, leverage, marginMode, exchangeType })
         });
         const d = await r.json();
-        if (d.ok) { burgerStates.set(d.data.id, d.data); renderBurgerCards(); showToast(`🍔 ${p.name} 已创建`); switchPage('dashboard'); }
+        if (d.ok) { burgerStates.set(d.data.id, d.data); renderBurgerCards(); showToast(`🍔 ${p.name} · ${symbol} 已创建`); switchPage('dashboard'); }
     } catch (e) { showToast('创建失败', 'error'); }
 }
 
@@ -543,6 +606,9 @@ async function createBurger() {
     const pattyId = document.getElementById('b-patty').value;
     const sauceId = document.getElementById('b-sauce').value;
     const symbol = document.getElementById('b-symbol').value;
+    const tradeType = document.getElementById('b-tradetype').value;
+    const leverage = parseInt(document.getElementById('b-leverage').value) || 10;
+    const marginMode = document.getElementById('b-margin').value;
     const exchangeType = document.getElementById('b-exchange').value;
     const apiKey = document.getElementById('b-apiKey').value;
     const apiSecret = document.getElementById('b-apiSecret').value;
@@ -550,7 +616,7 @@ async function createBurger() {
     try {
         const r = await fetch(`${API}/api/burgers`, {
             method: 'POST', headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({ name, emoji, baseId, pattyId, sauceId, symbol, exchangeType, exchangeConfig: { apiKey, apiSecret } })
+            body: JSON.stringify({ name, emoji, baseId, pattyId, sauceId, symbol, tradeType, leverage, marginMode, exchangeType, exchangeConfig: { apiKey, apiSecret } })
         });
         const d = await r.json();
         if (d.ok) { burgerStates.set(d.data.id, d.data); renderBurgerCards(); showToast(`🍔 ${name} 已创建`); document.getElementById('b-name').value = ''; switchPage('dashboard'); }
@@ -562,6 +628,13 @@ function toggleApiFields() {
     const show = (exchange === 'gate' || exchange === 'binance' || exchange === 'okx');
     document.getElementById('api-key-group').style.display = show ? 'flex' : 'none';
     document.getElementById('api-secret-group').style.display = show ? 'flex' : 'none';
+}
+
+function toggleLeverage() {
+    const type = document.getElementById('b-tradetype').value;
+    const show = type === 'futures';
+    document.getElementById('leverage-group').style.display = show ? 'flex' : 'none';
+    document.getElementById('margin-mode-group').style.display = show ? 'flex' : 'none';
 }
 
 async function startAllBurgers() {
@@ -681,6 +754,7 @@ function renderBurgerCard(id) {
               `<div class="anti-burn ok">✅ 运行正常</div>`)}
             <div class="card-tags">
                 <span class="tag">📈 ${b.symbol||'BTCUSDT'}</span>
+                <span class="tag">${b.tradeType==='futures'?'⚡ 合约':'💎 现货'}${b.tradeType==='futures'?' '+b.leverage+'x':''}</span>
                 <span class="tag">🍞 ${b.baseId||'-'}</span>
                 <span class="tag">🥩 ${b.pattyId||'-'}</span>
                 ${b.sauceId&&b.sauceId!=='none'?`<span class="tag">🫙 ${b.sauceId}</span>`:''}

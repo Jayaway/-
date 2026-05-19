@@ -8,6 +8,7 @@
  */
 
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const { getStrategyList, getStrategy, getStrategiesByLayer } = require('./strategies');
@@ -16,6 +17,21 @@ const { KitchenEngine } = require('./core/kitchen');
 
 const PORT = process.env.PORT || 3088;
 const HOST = process.env.HOST || '0.0.0.0';
+
+// HTTPS JSON 请求工具
+function fetchJSON(url) {
+    return new Promise((resolve, reject) => {
+        const mod = url.startsWith('https') ? https : http;
+        mod.get(url, { timeout: 10000 }, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                try { resolve(JSON.parse(data)); }
+                catch (e) { reject(new Error('JSON parse error')); }
+            });
+        }).on('error', reject).on('timeout', function() { this.destroy(); reject(new Error('timeout')); });
+    });
+}
 
 // ===== Agent 实例管理 (Legacy) =====
 const agents = new Map();
@@ -305,6 +321,67 @@ async function handleAPI(req, res) {
         // GET /api/kitchen/rankings — 赛马排名
         if (pathname === '/api/kitchen/rankings' && method === 'GET') {
             return sendJSON(res, { ok: true, data: kitchen.getRankings() });
+        }
+
+        // ========================================
+        // 实时行情代理 (避免浏览器 CORS)
+        // ========================================
+
+        // GET /api/ticker/:symbol — 获取实时行情
+        if (pathname === '/api/ticker' && method === 'GET') {
+            const symbol = url.searchParams.get('symbol') || 'BTCUSDT';
+            const gateSymbol = symbol.replace('USDT', '_USDT');
+            try {
+                const data = await fetchJSON(`https://api.gateio.ws/api/v4/spot/tickers?currency_pair=${gateSymbol}`);
+                return sendJSON(res, { ok: true, data });
+            } catch (err) {
+                return sendJSON(res, { ok: false, error: err.message }, 500);
+            }
+        }
+
+        // GET /api/tickers — 批量获取行情
+        if (pathname === '/api/tickers' && method === 'GET') {
+            const symbols = ['BTC_USDT', 'ETH_USDT', 'SOL_USDT', 'DOGE_USDT', 'HYPE_USDT', 'BNB_USDT'];
+            try {
+                const results = await Promise.all(
+                    symbols.map(s => fetchJSON(`https://api.gateio.ws/api/v4/spot/tickers?currency_pair=${s}`).catch(() => null))
+                );
+                const tickers = results.filter(Boolean).map(d => {
+                    const t = Array.isArray(d) ? d[0] : d;
+                    return {
+                        symbol: (t.currency_pair || '').replace('_USDT', 'USDT'),
+                        price: parseFloat(t.last || 0),
+                        change: parseFloat(t.change_percentage || 0),
+                        volume: parseFloat(t.base_volume || 0),
+                        high: parseFloat(t.high_24h || 0),
+                        low: parseFloat(t.low_24h || 0)
+                    };
+                });
+                return sendJSON(res, { ok: true, data: tickers });
+            } catch (err) {
+                return sendJSON(res, { ok: false, error: err.message }, 500);
+            }
+        }
+
+        // ========================================
+        // 交易所配置存储
+        // ========================================
+
+        // POST /api/exchange — 保存交易所配置
+        if (pathname === '/api/exchange' && method === 'POST') {
+            const body = await parseBody(req);
+            // 配置存入内存（重启后由前端 localStorage 恢复）
+            global._exchangeConfig = global._exchangeConfig || {};
+            global._exchangeConfig[body.type] = { apiKey: body.apiKey, apiSecret: body.apiSecret, passphrase: body.passphrase, host: body.host };
+            return sendJSON(res, { ok: true });
+        }
+
+        // GET /api/exchange/:type — 获取交易所配置
+        const exchMatch = pathname.match(/^\/api\/exchange\/(\w+)$/);
+        if (exchMatch && method === 'GET') {
+            const config = (global._exchangeConfig || {})[exchMatch[1]] || {};
+            // 不返回 secret，只确认是否已配置
+            return sendJSON(res, { ok: true, data: { configured: !!config.apiKey } });
         }
 
         return sendJSON(res, { ok: false, error: 'Not found' }, 404);

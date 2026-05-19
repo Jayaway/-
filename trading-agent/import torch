@@ -1,0 +1,72 @@
+import torch
+import torch.nn as nn
+
+# 1. 任务参数设置
+vocab_size = 5000       # 词表大小
+input_size = 10         # 词向量维度 (对应实验中的输入特征维度) [cite: 4]
+hidden_size = 20        # 隐藏层维度 [cite: 15]
+sequence_length = 5     # 句子长度 (时间步个数) [cite: 5]
+batch_size = 3          # 批次大小 [cite: 6]
+num_classes = 2         # 分类数量（例如：积极回答/消极回答）
+
+# 2. 定义基于RNN的文本分类/问答意图识别模型
+class NLPTaskModel(nn.Module):
+    def __init__(self, vocab_size, input_size, hidden_size, num_classes, is_bidirectional=False):
+        super(NLPTaskModel, self).__init__()
+        # 词嵌入层：将单词的离散索引转换为连续的特征向量
+        self.embedding = nn.Embedding(vocab_size, input_size)
+        
+        # 定义RNN模型
+        # 根据is_bidirectional参数决定是单向还是双向 [cite: 12, 39]
+        # 遵循实验设置，batch_first=False [cite: 14]
+        self.rnn = nn.RNN(input_size=input_size, 
+                          hidden_size=hidden_size, 
+                          num_layers=1, 
+                          batch_first=False, 
+                          bidirectional=is_bidirectional) # 
+        
+        # 全连接分类层
+        # 如果是双向RNN，隐藏状态的维度会翻倍
+        fc_input_dim = hidden_size * 2 if is_bidirectional else hidden_size
+        self.fc = nn.Linear(fc_input_dim, num_classes)
+
+    def forward(self, x):
+        # x 的维度: (sequence_length, batch_size)
+        # 通过嵌入层后，维度变为 (sequence_length, batch_size, input_size) 
+        embedded = self.embedding(x)
+        
+        # 前向传播，得到输出张量和最后一个时间步的隐藏状态 [cite: 17, 41]
+        output, hidden = self.rnn(embedded) # [cite: 22, 42]
+        
+        # 提取最后一个时间步的特征用于分类任务
+        if self.rnn.bidirectional:
+            # 对于双向RNN，需要拼接正向最后一个状态和反向最后一个状态
+            # hidden 维度为 (2, batch_size, hidden_size)
+            final_hidden = torch.cat((hidden[-2, :, :], hidden[-1, :, :]), dim=1)
+        else:
+            # 对于单向RNN，直接取最后一个状态
+            # hidden 维度为 (1, batch_size, hidden_size) 
+            final_hidden = hidden[-1, :, :]
+            
+        # 传入全连接层得到最终预测回答的概率或类别
+        out = self.fc(final_hidden)
+        return out
+
+# 3. 模拟实验数据 [cite: 3, 37]
+# 假设我们生成了一批经过词汇表映射的句子索引
+# 维度为 (sequence_length, batch_size)
+simulated_text_data = torch.randint(0, vocab_size, (sequence_length, batch_size))
+
+print("=== 拟合单向RNN模型 ===")
+# 实例化单向RNN模型
+model_uni = NLPTaskModel(vocab_size, input_size, hidden_size, num_classes, is_bidirectional=False)
+# 前向传播拟合
+output_uni = model_uni(simulated_text_data)
+print("单向RNN输出形状 (batch_size, num_classes):", output_uni.size())
+
+print("\n=== 拟合双向RNN模型 ===")
+# 实例化双向RNN模型 [cite: 39]
+model_bi = NLPTaskModel(vocab_size, input_size, hidden_size, num_classes, is_bidirectional=True) # 
+# 前向传播拟合
+output_bi = model_bi(simulated_text_data)
+print("双向RNN输出形状 (batch_size, num_classes):", output_bi.size())
